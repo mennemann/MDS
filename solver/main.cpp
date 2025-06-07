@@ -7,28 +7,28 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
-#define POP_SIZE 30
+#define POP_SIZE 20
 
 #ifdef DEBUG_BUILD
-    #define DEBUG_BLOCK(code) code;
+#define DEBUG_BLOCK(code) code;
+#define RELEASE_BLOCK(code) ;
 #else
-    #define DEBUG_BLOCK(code);
+#define DEBUG_BLOCK(code) ;
+#define RELEASE_BLOCK(code) code;
 #endif
-
-using Graph = std::vector<std::vector<uint32_t>>;
-
-struct Individual {
-    std::vector<bool> dom_set;
-    uint32_t fitness = 0;
-};
 
 std::atomic<bool> sigterm_recv(false);
 
 void sigterm_handler(int signum) {
     sigterm_recv.store(true);
 }
+
+// ############### Graph ###############
+
+using Graph = std::vector<std::vector<uint32_t>>;
 
 Graph read_gr_file(const std::string& filename) {
     std::ifstream file(filename);
@@ -75,32 +75,18 @@ void get_uncovered_vertices(const Graph& adj, const std::vector<bool>& dom_set, 
         if (!covered[u]) uncovered.push_back(u);
 }
 
-void repair(const Graph& adj, std::vector<bool>& dom_set) {
-    auto uncovered = std::vector<uint32_t>();
-    get_uncovered_vertices(adj, dom_set, uncovered);
+// ############### GA Methods ###############
 
-    for (auto i : uncovered) {
-        dom_set[i] = true;
-    }
+struct Individual {
+    std::vector<bool> dom_set;
+    uint32_t fitness = 0;
+};
+
+void update_fitness(Individual& ind) {
+    ind.fitness = std::count(ind.dom_set.begin(), ind.dom_set.end(), true);
 }
 
-void update_fitness(const Graph& adj, Individual& ind, std::vector<uint32_t>& uncovered) {
-    get_uncovered_vertices(adj, ind.dom_set, uncovered);
-
-    ind.fitness = std::count(ind.dom_set.begin(), ind.dom_set.end(), true) + uncovered.size();
-}
-
-void mutate(std::vector<bool>& dom_set, std::mt19937& rng, double flip_prob = 0.01) {
-    std::uniform_real_distribution<> prob(0.0, 1.0);
-
-    for (size_t i = 0; i < dom_set.size(); i++) {
-        if (prob(rng) < flip_prob) {
-            dom_set[i] = !dom_set[i];
-        }
-    }
-}
-
-const Individual& tournament_select(const std::vector<Individual>& pop, std::mt19937& rng, size_t k = 3) {
+const Individual& tournament_select(const std::vector<Individual>& pop, std::mt19937& rng, size_t k = 2) {
     std::uniform_int_distribution<> dist(0, pop.size() - 1);
     const Individual* best = nullptr;
     for (size_t i = 0; i < k; ++i) {
@@ -112,26 +98,71 @@ const Individual& tournament_select(const std::vector<Individual>& pop, std::mt1
     return *best;
 }
 
+const Individual& random_select(const std::vector<Individual>& pop, std::mt19937& rng) {
+    std::uniform_int_distribution<> dist(0, pop.size() - 1);
+
+    return pop[dist(rng)];
+}
+
 const Individual& best_select(const std::vector<Individual>& pop) {
     auto best = std::min_element(pop.begin(), pop.end(),
-                                  [](const Individual& a, const Individual& b) {
-                                      return a.fitness < b.fitness;
-                                  });
+                                 [](const Individual& a, const Individual& b) {
+                                     return a.fitness < b.fitness;
+                                 });
     return *best;
 }
 
+void full_repair(const Graph& adj, std::vector<bool>& dom_set) {
+    auto uncovered = std::vector<uint32_t>();
+    get_uncovered_vertices(adj, dom_set, uncovered);
 
-void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
-    auto worst = std::max_element(pop.begin(), pop.end(),
-                                  [](const Individual& a, const Individual& b) {
-                                      return a.fitness < b.fitness;
-                                  });
-
-    if (child.fitness < worst->fitness) {
-        *worst = child;
+    for (auto i : uncovered) {
+        dom_set[i] = true;
     }
 }
 
+void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt19937& rng) {
+    std::vector<uint32_t> uncovered;
+    get_uncovered_vertices(adj, dom_set, uncovered);
+    std::unordered_set uncovered_s(uncovered.begin(), uncovered.end());
+
+    while (!uncovered_s.empty()) {
+        std::uniform_int_distribution<> dis(0, uncovered_s.size() - 1);
+        auto it = uncovered_s.begin();
+        std::advance(it, dis(rng));
+        uint32_t new_v = *it;
+
+        dom_set[new_v] = true;
+        uncovered_s.erase(new_v);
+
+        for (auto neigh : adj[new_v]) {
+            uncovered_s.erase(neigh);
+        }
+    }
+}
+
+void mutate(std::vector<bool>& dom_set, std::mt19937& rng, double flip_prob) {
+    std::uniform_real_distribution<> prob(0.0, 1.0);
+
+    for (size_t i = 0; i < dom_set.size(); i++) {
+        if (prob(rng) < flip_prob) {
+            dom_set[i] = false;
+        }
+    }
+}
+
+void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
+    auto weakest = std::max_element(pop.begin(), pop.end(),
+                                    [](const Individual& a, const Individual& b) {
+                                        return a.fitness < b.fitness;
+                                    });
+
+    if (child.fitness < weakest->fitness) {
+        *weakest = child;
+    }
+}
+
+// ############### main ###############
 
 int main(int argc, char* argv[]) {
     std::signal(SIGTERM, sigterm_handler);
@@ -152,30 +183,30 @@ int main(int argc, char* argv[]) {
     const auto& adj = read_gr_file(filepath);
     const uint32_t n = adj.size();
 
-
-    std::vector<uint32_t> uncovered;
-
     DEBUG_BLOCK(i = 0);
     auto pop = std::vector<Individual>(POP_SIZE);
     for (auto& ind : pop) {
         DEBUG_BLOCK(std::cout << "Initializing population - " << ++i << "\r" << std::flush);
         ind.dom_set = std::vector<bool>(n, true);
-        mutate(ind.dom_set, rng);
-        update_fitness(adj, ind, uncovered);
-    }
+        mutate(ind.dom_set, rng, 0.3);
 
+        greedy_random_repair(adj, ind.dom_set, rng);
+        update_fitness(ind);
+    }
 
     DEBUG_BLOCK(std::cout << "Starting optimization" << std::endl);
     DEBUG_BLOCK(i = 0);
 
     while (!sigterm_recv.load()) {
         DEBUG_BLOCK(std::cout << ++i << " - " << best_select(pop).fitness << std::endl);
+
         const Individual& parent = tournament_select(pop, rng);
 
         Individual child = parent;
 
-        mutate(child.dom_set, rng);
-        update_fitness(adj, child, uncovered);
+        mutate(child.dom_set, rng, 0.1);
+        greedy_random_repair(adj, child.dom_set, rng);
+        update_fitness(child);
 
         replace_weakest(pop, child);
     }
@@ -183,11 +214,11 @@ int main(int argc, char* argv[]) {
     DEBUG_BLOCK(std::cout << "Recieved SIGTERM" << std::endl);
 
     auto best = best_select(pop);
-    repair(adj, best.dom_set);
 
-    for (uint32_t j = 0; j<n; j++){
-        if (best.dom_set[j]) std::cout << j+1 << std::endl;
-    }
+    RELEASE_BLOCK(
+        for (uint32_t j = 0; j < n; j++) {
+            if (best.dom_set[j]) std::cout << j + 1 << std::endl;
+        });
 
     return 0;
 }
