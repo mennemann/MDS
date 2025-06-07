@@ -11,6 +11,12 @@
 
 #define POP_SIZE 30
 
+#ifdef DEBUG_BUILD
+    #define DEBUG_BLOCK(code) code;
+#else
+    #define DEBUG_BLOCK(code);
+#endif
+
 using Graph = std::vector<std::vector<uint32_t>>;
 
 struct Individual {
@@ -21,7 +27,6 @@ struct Individual {
 std::atomic<bool> sigterm_recv(false);
 
 void sigterm_handler(int signum) {
-    std::cout << "Recieved SIGTERM" << std::endl;
     sigterm_recv.store(true);
 }
 
@@ -134,32 +139,37 @@ int main(int argc, char* argv[]) {
     std::random_device rd;
     std::mt19937 rng(rd());
 
+    DEBUG_BLOCK(int i);
+
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <graph.gr>\n";
         return 1;
     }
     std::string filepath = argv[1];
 
+    DEBUG_BLOCK(std::cout << "Loading graph" << std::endl);
+
     const auto& adj = read_gr_file(filepath);
     const uint32_t n = adj.size();
 
-    std::cout << "Loaded graph" << std::endl;
 
     std::vector<uint32_t> uncovered;
 
+    DEBUG_BLOCK(i = 0);
     auto pop = std::vector<Individual>(POP_SIZE);
     for (auto& ind : pop) {
+        DEBUG_BLOCK(std::cout << "Initializing population - " << ++i << "\r" << std::flush);
         ind.dom_set = std::vector<bool>(n, true);
         mutate(ind.dom_set, rng);
         update_fitness(adj, ind, uncovered);
     }
 
-    std::cout << "Initialized population" << std::endl;
 
+    DEBUG_BLOCK(std::cout << "Starting optimization" << std::endl);
+    DEBUG_BLOCK(i = 0);
 
-    int iteration = 0;
     while (!sigterm_recv.load()) {
-        if (++iteration%10 == 0) std::cout << iteration << " - " << best_select(pop).fitness << std::endl;
+        DEBUG_BLOCK(std::cout << ++i << " - " << best_select(pop).fitness << std::endl);
         const Individual& parent = tournament_select(pop, rng);
 
         Individual child = parent;
@@ -170,11 +180,14 @@ int main(int argc, char* argv[]) {
         replace_weakest(pop, child);
     }
 
-    auto best = best_select(pop);
-    std::cout << best.fitness << std::endl;
+    DEBUG_BLOCK(std::cout << "Recieved SIGTERM" << std::endl);
 
+    auto best = best_select(pop);
     repair(adj, best.dom_set);
 
+    for (uint32_t j = 0; j<n; j++){
+        if (best.dom_set[j]) std::cout << j+1 << std::endl;
+    }
 
     return 0;
 }
