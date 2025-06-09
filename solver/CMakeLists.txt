@@ -7,7 +7,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=x86-64")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+set(DEBUG_COUT "" CACHE STRING "Print debug information")
+if(DEBUG_COUT)
     add_compile_definitions(DEBUG_BUILD)
 endif()
 
