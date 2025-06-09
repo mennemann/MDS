@@ -30,14 +30,13 @@ void sigterm_handler(int signum) {
 
 using Graph = std::vector<std::vector<uint32_t>>;
 
-Graph read_gr_file(const std::string& filename) {
-    std::ifstream file(filename);
+Graph read_gr_file(std::istream& in) {
     std::string line;
     uint32_t n, u, v;
 
     Graph adj;
 
-    while (std::getline(file, line)) {
+    while (std::getline(in, line)) {
         if (line.empty() || line[0] == 'c') continue;
         if (line[0] == 'p') {
             std::istringstream iss(line);
@@ -164,7 +163,7 @@ void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
 
 // ############### main ###############
 
-int main(int argc, char* argv[]) {
+int main() {
     std::signal(SIGTERM, sigterm_handler);
 
     std::random_device rd;
@@ -172,15 +171,9 @@ int main(int argc, char* argv[]) {
 
     DEBUG_BLOCK(int i);
 
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <graph.gr>\n";
-        return 1;
-    }
-    std::string filepath = argv[1];
-
     DEBUG_BLOCK(std::cout << "Loading graph" << std::endl);
 
-    const auto& adj = read_gr_file(filepath);
+    const auto& adj = read_gr_file(std::cin);
     const uint32_t n = adj.size();
 
     DEBUG_BLOCK(i = 0);
@@ -216,6 +209,7 @@ int main(int argc, char* argv[]) {
     auto best = best_select(pop);
 
     RELEASE_BLOCK(
+        std::cout << std::count(best.dom_set.begin(), best.dom_set.end(), true) << std::endl;
         for (uint32_t j = 0; j < n; j++) {
             if (best.dom_set[j]) std::cout << j + 1 << std::endl;
         });
