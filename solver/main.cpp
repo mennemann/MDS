@@ -7,8 +7,10 @@
 #include <random>
 #include <sstream>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
+#include <algorithm>
+#include <stdexcept>
 
 #define POP_SIZE 20
 
@@ -123,19 +125,44 @@ void full_repair(const Graph& adj, std::vector<bool>& dom_set) {
 void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt19937& rng) {
     std::vector<uint32_t> uncovered;
     get_uncovered_vertices(adj, dom_set, uncovered);
-    std::unordered_set uncovered_s(uncovered.begin(), uncovered.end());
 
-    while (!uncovered_s.empty()) {
-        std::uniform_int_distribution<> dis(0, uncovered_s.size() - 1);
-        auto it = uncovered_s.begin();
-        std::advance(it, dis(rng));
-        uint32_t new_v = *it;
+    std::unordered_map<uint32_t, uint32_t> indexMap;
+    for (uint32_t i = 0; i < uncovered.size(); i++) {
+        indexMap[uncovered[i]] = i;
+    }
 
+    uint32_t idx;
+
+    while (!uncovered.empty()) {
+        std::uniform_int_distribution<> dis(0, uncovered.size() - 1);
+
+        idx = dis(rng);
+
+        uint32_t new_v = uncovered[idx];
         dom_set[new_v] = true;
-        uncovered_s.erase(new_v);
+
+        uncovered[idx] = uncovered.back();
+        indexMap[uncovered[idx]] = idx;
+        uncovered.pop_back();
+        indexMap.erase(new_v);
 
         for (auto neigh : adj[new_v]) {
-            uncovered_s.erase(neigh);
+            auto it = indexMap.find(neigh);
+            if (it == indexMap.end()) continue;
+
+            idx = indexMap[neigh];
+
+            uncovered[idx] = uncovered.back();
+            indexMap[uncovered[idx]] = idx;
+            uncovered.pop_back();
+            indexMap.erase(neigh);
+        }
+    }
+}
+
+
+
+
         }
     }
 }
