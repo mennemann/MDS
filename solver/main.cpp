@@ -6,13 +6,12 @@
 #include <iostream>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <algorithm>
-#include <stdexcept>
 
-#define POP_SIZE 20
+#define POP_SIZE 50
 
 #ifdef DEBUG_BUILD
 #define DEBUG_BLOCK(code) code;
@@ -25,6 +24,7 @@
 std::atomic<bool> sigterm_recv(false);
 
 void sigterm_handler(int signum) {
+    (void)signum;
     sigterm_recv.store(true);
 }
 
@@ -105,12 +105,11 @@ const Individual& random_select(const std::vector<Individual>& pop, std::mt19937
     return pop[dist(rng)];
 }
 
-const Individual& best_select(const std::vector<Individual>& pop) {
-    auto best = std::min_element(pop.begin(), pop.end(),
-                                 [](const Individual& a, const Individual& b) {
-                                     return a.fitness < b.fitness;
-                                 });
-    return *best;
+auto best_select(std::vector<Individual>& pop) {
+    return std::min_element(pop.begin(), pop.end(),
+                            [](const Individual& a, const Individual& b) {
+                                return a.fitness < b.fitness;
+                            });
 }
 
 void full_repair(const Graph& adj, std::vector<bool>& dom_set) {
@@ -160,13 +159,6 @@ void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt1
     }
 }
 
-
-
-
-        }
-    }
-}
-
 void mutate(std::vector<bool>& dom_set, std::mt19937& rng, double flip_prob) {
     std::uniform_real_distribution<> prob(0.0, 1.0);
 
@@ -196,29 +188,36 @@ int main() {
     std::random_device rd;
     std::mt19937 rng(rd());
 
-    DEBUG_BLOCK(int i);
+    int i;
 
     DEBUG_BLOCK(std::cout << "Loading graph" << std::endl);
 
     const auto& adj = read_gr_file(std::cin);
     const uint32_t n = adj.size();
 
-    DEBUG_BLOCK(i = 0);
+    i = 0;
     auto pop = std::vector<Individual>(POP_SIZE);
     for (auto& ind : pop) {
-        DEBUG_BLOCK(std::cout << "Initializing population - " << ++i << "\r" << std::flush);
+        ++i;
+        DEBUG_BLOCK(std::cout << "Initializing population - " << i << "\r" << std::flush);
+
         ind.dom_set = std::vector<bool>(n, true);
         mutate(ind.dom_set, rng, 0.3);
-
         greedy_random_repair(adj, ind.dom_set, rng);
         update_fitness(ind);
+
+        if (sigterm_recv.load()) {
+            pop = {Individual{ind.dom_set, 0}};
+            break;
+        }
     }
 
     DEBUG_BLOCK(std::cout << "Starting optimization" << std::endl);
-    DEBUG_BLOCK(i = 0);
 
+    i = 0;
     while (!sigterm_recv.load()) {
-        DEBUG_BLOCK(std::cout << ++i << " - " << best_select(pop).fitness << std::endl);
+        ++i;
+        DEBUG_BLOCK(std::cout << i << " - " << best_select(pop)->fitness << std::endl);
 
         const Individual& parent = tournament_select(pop, rng);
 
@@ -236,9 +235,9 @@ int main() {
     auto best = best_select(pop);
 
     RELEASE_BLOCK(
-        std::cout << std::count(best.dom_set.begin(), best.dom_set.end(), true) << std::endl;
+        std::cout << std::count(best->dom_set.begin(), best->dom_set.end(), true) << std::endl;
         for (uint32_t j = 0; j < n; j++) {
-            if (best.dom_set[j]) std::cout << j + 1 << std::endl;
+            if (best->dom_set[j]) std::cout << j + 1 << std::endl;
         });
 
     return 0;
