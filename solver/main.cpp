@@ -159,6 +159,137 @@ void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt1
     }
 }
 
+void greedy_priority_bucket_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt19937& rng) {
+    const uint32_t n = adj.size();
+    std::vector<bool> covered(n, false);
+    std::vector<int> gain(n);
+
+    for (uint32_t v = 0; v < n; ++v) {
+        if (dom_set[v]) {
+            covered[v] = true;
+            for (uint32_t neigh : adj[v]) {
+                covered[neigh] = true;
+            }
+        }
+    }
+
+    size_t max_deg = 0;
+    for (uint32_t v = 0; v < n; ++v) {
+        max_deg = std::max(max_deg, adj[v].size());
+
+        int g = 1;
+        for (uint32_t neigh : adj[v])
+            if (!covered[neigh]) g++;
+        gain[v] = g;
+    }
+
+    std::vector<std::vector<uint32_t>> buckets(max_deg + 2);
+    std::vector<std::pair<int, size_t>> position(n);
+
+    for (uint32_t v = 0; v < n; ++v) {
+        int g = gain[v];
+        buckets[g].push_back(v);
+        position[v] = {g, buckets[g].size() - 1};
+    }
+
+    auto remove_from_bucket = [&](uint32_t v) {
+        auto [g, idx] = position[v];
+        std::vector<uint32_t>& bucket = buckets[g];
+        int last = bucket.back();
+        bucket[idx] = last;
+        position[last] = {g, idx};
+        bucket.pop_back();
+    };
+
+    auto update_gain = [&](uint32_t v, int new_gain) {
+        if (gain[v] == new_gain) return;
+        remove_from_bucket(v);
+        buckets[new_gain].push_back(v);
+        position[v] = {new_gain, buckets[new_gain].size() - 1};
+        gain[v] = new_gain;
+    };
+
+    auto get_max_gain_bucket = [&]() -> std::vector<uint32_t>& {
+        for (int g = max_deg + 1; g >= 0; g--) {
+            if (!buckets[g].empty()) return buckets[g];
+        }
+        throw std::runtime_error("no bucket left");
+    };
+
+    uint32_t covered_count = std::count(covered.begin(), covered.end(), true);
+    while (covered_count < n) {
+        std::vector<uint32_t>& bucket = get_max_gain_bucket();
+
+        std::uniform_int_distribution<int> dist(0, (int)bucket.size() - 1);
+        uint32_t v = bucket[dist(rng)];
+        remove_from_bucket(v);
+        dom_set[v] = true;
+
+        if (!covered[v]) {
+            covered[v] = true;
+            covered_count++;
+        }
+
+        for (uint32_t neigh : adj[v]) {
+            if (!covered[neigh]) {
+                covered[neigh] = true;
+                covered_count++;
+
+                for (uint32_t w : adj[neigh]) {
+                    if (!covered[w]) {
+                        update_gain(w, gain[w] - 1);
+                    }
+                }
+            }
+        }
+
+        for (uint32_t neigh : adj[v]) {
+            if (!covered[neigh]) {
+                update_gain(neigh, gain[neigh] - 1);
+            }
+        }
+    }
+}
+
+void greedy_local_removal(const Graph& adj, std::vector<bool>& dom_set, std::mt19937& rng) {
+    const uint32_t n = dom_set.size();
+    std::vector<int> coverage(n, 0);
+
+    for (uint32_t u = 0; u < n; ++u) {
+        if (dom_set[u]) {
+            coverage[u]++;
+            for (auto v : adj[u]) coverage[v]++;
+        }
+    }
+
+    std::vector<uint32_t> candidates;
+    for (uint32_t u = 0; u < n; ++u)
+        if (dom_set[u]) candidates.push_back(u);
+
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+
+    for (uint32_t u : candidates) {
+        bool removable = true;
+
+        if (coverage[u] <= 1) {
+            removable = false;
+        }
+
+        for (uint32_t v : adj[u]) {
+            if (coverage[v] <= 1) {
+                removable = false;
+                break;
+            }
+        }
+
+        if (removable) {
+            dom_set[u] = false;
+            coverage[u]--;
+            for (auto v : adj[u]) coverage[v]--;
+        }
+    }
+}
+
 void random_mutate(std::vector<bool>& dom_set, std::mt19937& rng, double mutate_prob) {
     std::uniform_real_distribution<> prob(0.0, 1.0);
 
