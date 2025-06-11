@@ -2,7 +2,6 @@
 #include <atomic>
 #include <csignal>
 #include <cstdint>
-#include <fstream>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -21,11 +20,11 @@
 #define RELEASE_BLOCK(code) code;
 #endif
 
-std::atomic<bool> sigterm_recv(false);
+std::atomic<bool> term_recv(false);
 
-void sigterm_handler(int signum) {
+void signal_handler(int signum) {
     (void)signum;
-    sigterm_recv.store(true);
+    term_recv.store(true);
 }
 
 // ############### Graph ###############
@@ -96,6 +95,7 @@ const Individual& tournament_select(const std::vector<Individual>& pop, std::mt1
             best = &candidate;
         }
     }
+
     return *best;
 }
 
@@ -105,19 +105,26 @@ const Individual& random_select(const std::vector<Individual>& pop, std::mt19937
     return pop[dist(rng)];
 }
 
-auto best_select(std::vector<Individual>& pop) {
+auto best_select_it(std::vector<Individual>& pop) {
     return std::min_element(pop.begin(), pop.end(),
                             [](const Individual& a, const Individual& b) {
                                 return a.fitness < b.fitness;
                             });
 }
 
+auto worst_select_it(std::vector<Individual>& pop) {
+    return std::max_element(pop.begin(), pop.end(),
+                            [](const Individual& a, const Individual& b) {
+                                return a.fitness < b.fitness;
+                            });
+}
+
 void full_repair(const Graph& adj, std::vector<bool>& dom_set) {
-    auto uncovered = std::vector<uint32_t>();
+    std::vector<uint32_t> uncovered;
     get_uncovered_vertices(adj, dom_set, uncovered);
 
-    for (auto i : uncovered) {
-        dom_set[i] = true;
+    for (auto u : uncovered) {
+        dom_set[u] = true;
     }
 }
 
@@ -125,12 +132,12 @@ void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt1
     std::vector<uint32_t> uncovered;
     get_uncovered_vertices(adj, dom_set, uncovered);
 
-    std::unordered_map<uint32_t, uint32_t> indexMap;
-    for (uint32_t i = 0; i < uncovered.size(); i++) {
+    std::unordered_map<uint32_t, size_t> indexMap;
+    for (size_t i = 0; i < uncovered.size(); i++) {
         indexMap[uncovered[i]] = i;
     }
 
-    uint32_t idx;
+    size_t idx;
 
     while (!uncovered.empty()) {
         std::uniform_int_distribution<> dis(0, uncovered.size() - 1);
@@ -159,21 +166,51 @@ void greedy_random_repair(const Graph& adj, std::vector<bool>& dom_set, std::mt1
     }
 }
 
-void mutate(std::vector<bool>& dom_set, std::mt19937& rng, double flip_prob) {
+void random_mutate(std::vector<bool>& dom_set, std::mt19937& rng, double mutate_prob) {
     std::uniform_real_distribution<> prob(0.0, 1.0);
 
     for (size_t i = 0; i < dom_set.size(); i++) {
-        if (prob(rng) < flip_prob) {
+        if (prob(rng) < mutate_prob) {
+            dom_set[i] = prob(rng) < 0.5;
+        }
+    }
+}
+
+void false_mutate(std::vector<bool>& dom_set, std::mt19937& rng, double mutate_prob) {
+    std::uniform_real_distribution<> prob(0.0, 1.0);
+
+    for (size_t i = 0; i < dom_set.size(); i++) {
+        if (prob(rng) < mutate_prob) {
             dom_set[i] = false;
         }
     }
 }
 
+Individual uniform_crossover(const Individual& a, const Individual& b, std::mt19937& rng) {
+    Individual child;
+    child.dom_set.resize(a.dom_set.size());
+
+    std::bernoulli_distribution dist(0.5);
+    for (size_t i = 0; i < a.dom_set.size(); i++) {
+        child.dom_set[i] = dist(rng) ? a.dom_set[i] : b.dom_set[i];
+    }
+
+    return child;
+}
+
+Individual set_intersection_crossover(const Individual& a, const Individual& b) {
+    Individual child;
+    child.dom_set.resize(a.dom_set.size());
+
+    for (size_t i = 0; i < a.dom_set.size(); i++) {
+        child.dom_set[i] = a.dom_set[i] && b.dom_set[i];
+    }
+
+    return child;
+}
+
 void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
-    auto weakest = std::max_element(pop.begin(), pop.end(),
-                                    [](const Individual& a, const Individual& b) {
-                                        return a.fitness < b.fitness;
-                                    });
+    auto weakest = worst_select_it(pop);
 
     if (child.fitness < weakest->fitness) {
         *weakest = child;
@@ -183,7 +220,7 @@ void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
 // ############### main ###############
 
 int main() {
-    std::signal(SIGTERM, sigterm_handler);
+    std::signal(SIGTERM, signal_handler);
 
     std::random_device rd;
     std::mt19937 rng(rd());
@@ -202,11 +239,11 @@ int main() {
         DEBUG_BLOCK(std::cout << "Initializing population - " << i << "\r" << std::flush);
 
         ind.dom_set = std::vector<bool>(n, true);
-        mutate(ind.dom_set, rng, 0.3);
+        false_mutate(ind.dom_set, rng, 0.3);
         greedy_random_repair(adj, ind.dom_set, rng);
         update_fitness(ind);
 
-        if (sigterm_recv.load()) {
+        if (term_recv.load()) {
             pop = {Individual{ind.dom_set, 0}};
             break;
         }
@@ -215,15 +252,15 @@ int main() {
     DEBUG_BLOCK(std::cout << "Starting optimization" << std::endl);
 
     i = 0;
-    while (!sigterm_recv.load()) {
+    while (!term_recv.load()) {
         ++i;
-        DEBUG_BLOCK(std::cout << i << " - " << best_select(pop)->fitness << std::endl);
+        DEBUG_BLOCK(std::cout << i << " - " << best_select_it(pop)->fitness << std::endl);
 
         const Individual& parent = tournament_select(pop, rng);
 
         Individual child = parent;
 
-        mutate(child.dom_set, rng, 0.1);
+        random_mutate(child.dom_set, rng, 0.01);
         greedy_random_repair(adj, child.dom_set, rng);
         update_fitness(child);
 
@@ -232,7 +269,7 @@ int main() {
 
     DEBUG_BLOCK(std::cout << "Recieved SIGTERM" << std::endl);
 
-    auto best = best_select(pop);
+    auto best = best_select_it(pop);
 
     RELEASE_BLOCK(
         std::cout << std::count(best->dom_set.begin(), best->dom_set.end(), true) << std::endl;
