@@ -20,13 +20,6 @@
 #define RELEASE_BLOCK(code) code;
 #endif
 
-std::atomic<bool> term_recv(false);
-
-void signal_handler(int signum) {
-    (void)signum;
-    term_recv.store(true);
-}
-
 // ############### Graph ###############
 
 using Graph = std::vector<std::vector<uint32_t>>;
@@ -219,6 +212,19 @@ void replace_weakest(std::vector<Individual>& pop, const Individual& child) {
 
 // ############### main ###############
 
+Individual best;
+
+void signal_handler(int signum) {
+    (void)signum;
+
+    std::cout << std::count(best.dom_set.begin(), best.dom_set.end(), true) << std::endl;
+    for (uint32_t j = 0; j < best.dom_set.size(); j++) {
+        if (best.dom_set[j]) std::cout << j + 1 << std::endl;
+    };
+
+    std::exit(0);
+}
+
 int main() {
     std::signal(SIGTERM, signal_handler);
 
@@ -243,16 +249,13 @@ int main() {
         greedy_random_repair(adj, ind.dom_set, rng);
         update_fitness(ind);
 
-        if (term_recv.load()) {
-            pop = {Individual{ind.dom_set, 0}};
-            break;
-        }
+        if (i == 1) best = ind;
     }
 
     DEBUG_BLOCK(std::cout << "Starting optimization" << std::endl);
 
     i = 0;
-    while (!term_recv.load()) {
+    while (true) {
         ++i;
         DEBUG_BLOCK(std::cout << i << " - " << best_select_it(pop)->fitness << std::endl);
 
@@ -265,17 +268,9 @@ int main() {
         update_fitness(child);
 
         replace_weakest(pop, child);
+
+        best = *best_select_it(pop);
     }
-
-    DEBUG_BLOCK(std::cout << "Recieved SIGTERM" << std::endl);
-
-    auto best = best_select_it(pop);
-
-    RELEASE_BLOCK(
-        std::cout << std::count(best->dom_set.begin(), best->dom_set.end(), true) << std::endl;
-        for (uint32_t j = 0; j < n; j++) {
-            if (best->dom_set[j]) std::cout << j + 1 << std::endl;
-        });
 
     return 0;
 }
