@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-#define POP_SIZE 50
+#define POP_SIZE 40
 
 #ifdef DEBUG_BUILD
 #define DEBUG_BLOCK(code) code;
@@ -375,9 +375,9 @@ int main() {
         ++i;
         DEBUG_BLOCK(std::cout << "Initializing population - " << i << "\r" << std::flush);
 
-        ind.dom_set = std::vector<bool>(n, true);
-        false_mutate(ind.dom_set, rng, 0.3);
-        greedy_random_repair(adj, ind.dom_set, rng);
+        ind.dom_set = std::vector<bool>(n, false);
+        greedy_priority_bucket_repair(adj, ind.dom_set, rng);
+        greedy_local_removal(adj, ind.dom_set, rng);
         update_fitness(ind);
 
         if (i == 1) best = ind;
@@ -390,12 +390,13 @@ int main() {
         ++i;
         DEBUG_BLOCK(std::cout << i << " - " << best_select_it(pop)->fitness << std::endl);
 
-        const Individual& parent = tournament_select(pop, rng);
+        const Individual& parent1 = tournament_select(pop, rng);
+        const Individual& parent2 = tournament_select(pop, rng);
 
-        Individual child = parent;
-
-        random_mutate(child.dom_set, rng, 0.01);
-        greedy_random_repair(adj, child.dom_set, rng);
+        Individual child = set_intersection_crossover(parent1, parent2);
+        false_mutate(child.dom_set, rng, 0.01);
+        greedy_priority_bucket_repair(adj, child.dom_set, rng);
+        greedy_local_removal(adj, child.dom_set, rng);
         update_fitness(child);
 
         replace_weakest(pop, child);
