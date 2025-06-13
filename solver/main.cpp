@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <iostream>
@@ -369,6 +368,8 @@ int main() {
     const auto& adj = read_gr_file(std::cin);
     const uint32_t n = adj.size();
 
+    best.dom_set = std::vector<bool>(n,true);
+
     i = 0;
     auto pop = std::vector<Individual>(POP_SIZE);
     for (auto& ind : pop) {
@@ -394,7 +395,6 @@ int main() {
         const Individual& parent2 = tournament_select(pop, rng);
 
         Individual child = set_intersection_crossover(parent1, parent2);
-        false_mutate(child.dom_set, rng, 0.01);
         greedy_priority_bucket_repair(adj, child.dom_set, rng);
         greedy_local_removal(adj, child.dom_set, rng);
         update_fitness(child);
